@@ -9,7 +9,6 @@ int MAXSIZE = 100;
 
 int main(int argc, char* argv[]) {
 	char cur_dir[ PATH_MAX + 1 ];
-	
 	while (1) {
 		char c;
 		char* buf = malloc(MAXSIZE);
@@ -25,12 +24,42 @@ int main(int argc, char* argv[]) {
 			char* argv[i] = malloc(MAXSIZE);	
 		}
 		char* buf = malloc(MAXSIZE);
+		
 		char param_memory = 0;
+		char param_output = 0;
+		
+		char output_file[MAXSIZE];
 		i = 0;
-		while (1) {
+		int argc = 0;
+		while (1) { // читаем запрос
 			c = fgetc(stdin);
-			if (c != '\n') {
-				if (c != ' ') {
+			if (c != '\n') { //запроc закончился?
+				if (c == '>') { // если вывод в файл -> отслеживаем отдельно
+					c = fgetc(stdin);
+					param_output = 1;
+					while(1) {
+						c = fgetc(stdin);
+						if (c != ' ') {
+							buf[i++] = c;
+							if (i == MAXSIZE - 1) {
+								buf = realloc(buf, 2*MAXSIZE);
+								param_memory = 1;
+								MAXSIZE = MAXSIZE * 2;
+							}
+						}
+						else {
+							buf[i] = '\0';
+							if (output_file) 
+								output_file = realloc(output_file, 2*MAXSIZE);
+							strcpy(output_file, buf);
+							i = 0;
+							param_memory = 0;
+							break;
+						}
+					}
+					break;
+				}
+				else if (c != ' ') { // по аргументам разделяем
 					buf[i++] = c;
 					if (i == MAXSIZE - 1) {
 						buf = realloc(buf, 2*MAXSIZE);
@@ -38,57 +67,76 @@ int main(int argc, char* argv[]) {
 						MAXSIZE = MAXSIZE * 2;
 					}
 				}
-				else {
+				else { // заносим аргументы в массив
 					if (param_memory) {
 						argv[j] = realloc(argv[j], 2*MAXSIZE);
 					}
 					buf[i] = '\0';
-					argv[j] = buf;
+					strcpy(argv[j], buf);
 					j++;
 					param_memory = 0;
 					i = 0;
+					count++;
 				}
 			} 
-			else {
+			else { // на следующую строку -> следующий аргумент
 				break;
 			}
 		}
-		if ( !strcmp(argv[0], "cd") ) {
-			strncat( cur_dir, argv[0], PATH_MAX );
+		if ( !strcmp(argv[0], "cd") ) { // отдельно отслеживаем переход в директорию
+			strncat( cur_dir, argv[1], PATH_MAX );
 			strncat( cur_dir, "/", PATH_MAX );
+			ch_dir(cur_dir);
 			continue;
 		}
-		
 		printf("%s", cur_dir);
-		if (execvp(argv[0], argv) == -1) {
-			perror("EXEC");
-			return;
-		}
-		// распараллеливаем
-		int PID = fork();	
-		if (PID < 0) { 
-			perror("FORK");
-			exit(0);	
-		}
-		if (PID == 0){ // потомок выполняет
-			close(filedes[0]);
-			dup2(filedes[1], 1);
-			if (execvp(argv[0], argv) == -1) {
-				perror("EXEC");
-				return;
+		if (strcmp(argv[argc], '&')) { // если запускаем в фоне
+			
+			if (param_output) {
+				int fd = open(output_file, O_CREATE | O_TRUNC, 0777);
+				dup2(fd, 1);
+				if (execvp(argv[0], argv) == -1) { // запускаем процесс
+					perror("EXEC");
+					return;
+				}
+				close(fd);
 			}
-			close (filedes[1]);
-			exit(0);
-		}
-		else { // родитель читает дальше
-			close(filedes[1]);
-		    int pos = 0;
-		    char buf[500];
-			while ( ( pos = read(filedes[0], buf, 500) ) != 0) {
-				write(1, buf, pos);
+			else {
+				if (execvp(argv[0], argv) == -1) { // запускаем процесс
+					perror("EXEC");
+					return;
+				}
 			}
-			continue;
-		}	
+		}
+		else { // распараллеливаем если нужно
+		
+			int PID = fork();	
+			if (PID < 0) { 
+				perror("FORK");
+				exit(0);	
+			}
+			if (PID == 0){ // потомок выполняет
+				if (param_output) {
+					int fd = open(output_file, O_CREATE | O_TRUNC, 0777);
+					dup2(fd, 1);
+					if (execvp(argv[0], argv) == -1) { // запускаем процесс
+						perror("EXEC");
+						return;
+					}
+				}
+				else {
+					if (execvp(argv[0], argv) == -1) { // запускаем процесс
+						perror("EXEC");
+						return;
+					}
+				}
+				close(fd);
+				exit(0);
+			}
+			else { // родитель читает дальше
+				continue;
+			}	
+		}
 	}
 	return 0;
 }
